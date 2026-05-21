@@ -20,7 +20,7 @@ THRESHOLD_MEDIUM = 0.15
 THRESHOLD_HIGH   = 0.30
 
 HL_API      = "https://api.hyperliquid.xyz/info"
-BINANCE_API = "https://fapi.binance.com/fapi/v1/premiumIndex"
+BINANCE_API = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 # Telegram
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
@@ -30,7 +30,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 BINANCE_SYMBOLS = {
     "BTC":  "BTCUSDT",
     "ETH":  "ETHUSDT",
-    "HYPE": "HYPE_USDT",
+    "HYPE": "HYPEUSDT",
 }
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
