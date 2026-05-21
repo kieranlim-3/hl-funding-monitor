@@ -30,7 +30,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 BINANCE_SYMBOLS = {
     "BTC":  "BTCUSDT",
     "ETH":  "ETHUSDT",
-    "HYPE": "HYPEUSDT",
+    "HYPE": "HYPE_USDT",
 }
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
