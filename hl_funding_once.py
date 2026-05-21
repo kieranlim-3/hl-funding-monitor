@@ -72,8 +72,12 @@ def fetch_hl_rates():
 def evaluate_signal(funding_apy):
     fee_apy = (ENTRY_EXIT / 30) * 365
     net_apy = funding_apy - fee_apy
-    if funding_apy < 0:
-        return "NEGATIVE ❌", False
+    if funding_apy < -0.10:
+        return "VERY NEGATIVE 🟢 LONG PERP!", True
+    elif funding_apy < -0.05:
+        return f"NEGATIVE (net ~{abs(net_apy):.1%}) 🟢 consider long perp", True
+    elif funding_apy < 0:
+        return "SLIGHTLY NEGATIVE ⚡ monitor", False
     elif funding_apy < THRESHOLD_LOW:
         return f"TOO LOW (net ~{net_apy:.1%}) ⬇️", False
     elif funding_apy < THRESHOLD_MEDIUM:
