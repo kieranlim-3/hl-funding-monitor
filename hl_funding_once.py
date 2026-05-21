@@ -1,5 +1,5 @@
 """
-Hyperliquid + Binance Funding Rate Monitor — GitHub Actions version
+Hyperliquid Funding Rate Monitor — GitHub Actions version
 Runs once, appends to funding_log.csv, sends Telegram update, then exits.
 Triggered every hour by GitHub Actions cron.
 """
@@ -19,19 +19,11 @@ THRESHOLD_LOW    = 0.05
 THRESHOLD_MEDIUM = 0.15
 THRESHOLD_HIGH   = 0.30
 
-HL_API      = "https://api.hyperliquid.xyz/info"
-BINANCE_API = "https://fapi.binance.com/fapi/v1/fundingRate"
+HL_API = "https://api.hyperliquid.xyz/info"
 
 # Telegram
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-
-# Binance symbol mapping
-BINANCE_SYMBOLS = {
-    "BTC":  "BTCUSDT",
-    "ETH":  "ETHUSDT",
-    "HYPE": "HYPEUSDT",
-}
 
 # ── Telegram ──────────────────────────────────────────────────────────────────
 def send_telegram(message):
@@ -48,7 +40,7 @@ def send_telegram(message):
     except Exception as e:
         print(f"[ERROR] Telegram send failed: {e}")
 
-# ── Fetch HL ─────────────────────────────────────────────────────────────────
+# ── Fetch HL ──────────────────────────────────────────────────────────────────
 def fetch_hl_rates():
     try:
         res = requests.post(
@@ -76,39 +68,6 @@ def fetch_hl_rates():
         print(f"[ERROR] HL fetch failed: {e}")
         return {}
 
-# ── Fetch Binance ─────────────────────────────────────────────────────────────
-def fetch_binance_rates():
-    result = {}
-    for coin, symbol in BINANCE_SYMBOLS.items():
-        try:
-            # Use ticker endpoint which includes funding rate
-            res = requests.get(
-                "https://fapi.binance.com/fapi/v1/fundingRate",
-                params={"symbol": symbol, "limit": 1},
-                timeout=10
-            )
-            res.raise_for_status()
-            data = res.json()
-            if not data:
-                continue
-            funding_8h = float(data[0]["fundingRate"])
-            # Get mark price separately
-            res2 = requests.get(
-                "https://fapi.binance.com/fapi/v1/premiumIndex",
-                params={"symbol": symbol},
-                timeout=10
-            )
-            res2.raise_for_status()
-            data2 = res2.json()
-            result[coin] = {
-                "funding_8h":  funding_8h,
-                "funding_apy": funding_8h * 3 * 365,
-                "mark_px":     float(data2["markPrice"]),
-            }
-        except Exception as e:
-            print(f"[ERROR] Binance fetch failed for {coin}: {e}")
-    return result
-
 # ── Signal ────────────────────────────────────────────────────────────────────
 def evaluate_signal(funding_apy):
     fee_apy = (ENTRY_EXIT / 30) * 365
@@ -124,12 +83,6 @@ def evaluate_signal(funding_apy):
     else:
         return f"ATTRACTIVE (net ~{net_apy:.1%}) 🚨", True
 
-# ── Best exchange picker ──────────────────────────────────────────────────────
-def best_exchange(hl_apy, bn_apy):
-    if hl_apy >= bn_apy:
-        return "HL", hl_apy
-    return "Binance", bn_apy
-
 # ── CSV ───────────────────────────────────────────────────────────────────────
 def init_csv():
     if not os.path.exists(LOG_FILE):
@@ -137,22 +90,18 @@ def init_csv():
             writer = csv.writer(f)
             writer.writerow([
                 "timestamp", "coin",
-                "hl_funding_8h", "hl_funding_apy",
-                "bn_funding_8h", "bn_funding_apy",
-                "mark_px", "best_exchange", "signal"
+                "funding_8h", "funding_apy",
+                "mark_px", "signal"
             ])
 
-def append_row(timestamp, coin, hl, bn, mark_px, best_ex, signal):
+def append_row(timestamp, coin, data, signal):
     with open(LOG_FILE, "a", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
             timestamp, coin,
-            f"{hl['funding_8h']:.6f}",
-            f"{hl['funding_apy']:.4f}",
-            f"{bn['funding_8h']:.6f}" if bn else "N/A",
-            f"{bn['funding_apy']:.4f}" if bn else "N/A",
-            f"{mark_px:.4f}",
-            best_ex,
+            f"{data['funding_8h']:.6f}",
+            f"{data['funding_apy']:.4f}",
+            f"{data['mark_px']:.4f}",
             signal
         ])
 
@@ -160,15 +109,14 @@ def append_row(timestamp, coin, hl, bn, mark_px, best_ex, signal):
 def main():
     now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     hl   = fetch_hl_rates()
-    bn   = fetch_binance_rates()
 
     if not hl:
-        send_telegram("⚠️ HL Monitor: Failed to fetch HL funding rates.")
+        send_telegram("⚠️ HL Monitor: Failed to fetch funding rates.")
         return
 
     init_csv()
 
-    lines  = [f"<b>📊 Funding Update — {now} UTC</b>\n"]
+    lines  = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
     alerts = []
 
     print(f"[{now}]")
@@ -176,38 +124,28 @@ def main():
         if coin not in hl:
             continue
 
-        hl_data = hl[coin]
-        bn_data = bn.get(coin)
-        mark_px = hl_data["mark_px"]
+        d              = hl[coin]
+        signal, notify = evaluate_signal(d["funding_apy"])
+        append_row(now, coin, d, signal)
 
-        hl_apy  = hl_data["funding_apy"]
-        bn_apy  = bn_data["funding_apy"] if bn_data else 0
-
-        best_ex, best_apy = best_exchange(hl_apy, bn_apy)
-        signal, notify    = evaluate_signal(best_apy)
-
-        append_row(now, coin, hl_data, bn_data, mark_px, best_ex, signal)
-
-        # Console
-        bn_str = f"BN: {bn_apy:+.2%}" if bn_data else "BN: N/A"
         print(
-            f"  {coin:4s} | HL: {hl_apy:+.2%} | {bn_str} | "
-            f"Best: {best_ex} {best_apy:+.2%} | Mark: ${mark_px:,.2f} | {signal}"
+            f"  {coin:4s} | "
+            f"8h: {d['funding_8h']:+.4%} | "
+            f"APY: {d['funding_apy']:+.2%} | "
+            f"Mark: ${d['mark_px']:,.2f} | "
+            f"{signal}"
         )
 
-        # Telegram line
-        bn_line = f"Binance: {bn_apy:+.2%}" if bn_data else "Binance: N/A"
         lines.append(
-            f"<b>{coin}</b> | ${mark_px:,.2f}\n"
-            f"HL: {hl_apy:+.2%} | {bn_line}\n"
-            f"Best: <b>{best_ex}</b> → {signal}"
+            f"<b>{coin}</b> | APY: {d['funding_apy']:+.2%} | "
+            f"${d['mark_px']:,.2f}\n{signal}"
         )
 
         if notify:
             alerts.append(
-                f"🚨 <b>{coin}</b> funding attractive on {best_ex}!\n"
-                f"APY: {best_apy:+.2%} | Mark: ${mark_px:,.2f}\n"
-                f"Short perp on {best_ex}, buy spot on Coinhako."
+                f"🚨 <b>{coin}</b> funding attractive on HL!\n"
+                f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
+                f"Short perp on HL, buy spot on Coinhako."
             )
 
     if not alerts:
