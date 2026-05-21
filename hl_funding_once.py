@@ -1,6 +1,6 @@
 """
-Hyperliquid Funding Rate Monitor — GitHub Actions version
-Runs once, appends to funding_log.csv, then exits.
+Hyperliquid Funding Rate Monitor — GitHub Actions version with Telegram
+Runs once, appends to funding_log.csv, sends Telegram update, then exits.
 Triggered every hour by GitHub Actions cron.
 """
 
@@ -20,6 +20,25 @@ THRESHOLD_MEDIUM = 0.15
 THRESHOLD_HIGH   = 0.30
 
 HL_API = "https://api.hyperliquid.xyz/info"
+
+# Telegram — loaded from environment variables (GitHub Secrets)
+TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# ── Telegram ──────────────────────────────────────────────────────────────────
+def send_telegram(message):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("[WARN] Telegram credentials not set, skipping.")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": message,
+            "parse_mode": "HTML"
+        }, timeout=10)
+    except Exception as e:
+        print(f"[ERROR] Telegram send failed: {e}")
 
 # ── Fetch ─────────────────────────────────────────────────────────────────────
 def fetch_funding_rates():
@@ -59,15 +78,15 @@ def evaluate_signal(funding_apy):
     fee_apy = (ENTRY_EXIT / 30) * 365
     net_apy = funding_apy - fee_apy
     if funding_apy < 0:
-        return "NEGATIVE"
+        return "NEGATIVE ❌", False
     elif funding_apy < THRESHOLD_LOW:
-        return f"TOO LOW (net ~{net_apy:.1%})"
+        return f"TOO LOW (net ~{net_apy:.1%}) ⬇️", False
     elif funding_apy < THRESHOLD_MEDIUM:
-        return f"MARGINAL (net ~{net_apy:.1%})"
+        return f"MARGINAL (net ~{net_apy:.1%}) 😐", False
     elif funding_apy < THRESHOLD_HIGH:
-        return f"DECENT (net ~{net_apy:.1%})"
+        return f"DECENT (net ~{net_apy:.1%}) 👀", True
     else:
-        return f"ATTRACTIVE (net ~{net_apy:.1%})"
+        return f"ATTRACTIVE (net ~{net_apy:.1%}) 🚨", True
 
 # ── CSV ───────────────────────────────────────────────────────────────────────
 def init_csv():
@@ -101,9 +120,15 @@ def main():
 
     if not rates:
         print("No data fetched, exiting.")
+        send_telegram("⚠️ HL Monitor: Failed to fetch funding rates.")
         return
 
     init_csv()
+
+    # Build Telegram message
+    lines       = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
+    alerts      = []
+    any_notable = False
 
     print(f"[{now}]")
     for coin in COINS:
@@ -111,8 +136,8 @@ def main():
             print(f"  {coin}: not found")
             continue
 
-        d      = rates[coin]
-        signal = evaluate_signal(d["funding_apy"])
+        d              = rates[coin]
+        signal, notify = evaluate_signal(d["funding_apy"])
         append_row(now, coin, d, signal)
 
         print(
@@ -122,6 +147,30 @@ def main():
             f"Mark: ${d['mark_px']:,.2f} | "
             f"{signal}"
         )
+
+        # Add to Telegram message
+        lines.append(
+            f"<b>{coin}</b> | APY: {d['funding_apy']:+.2%} | "
+            f"${d['mark_px']:,.2f}\n{signal}"
+        )
+
+        if notify:
+            any_notable = True
+            alerts.append(
+                f"🚨 <b>{coin}</b> funding attractive!\n"
+                f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
+                f"Consider opening short perp + hold spot as hedge."
+            )
+
+    # Always send hourly update
+    if not any_notable:
+        lines.append("\n<i>No positions recommended right now.</i>")
+
+    send_telegram("\n\n".join(lines))
+
+    # Send separate alert if any coin is notable
+    for alert in alerts:
+        send_telegram(alert)
 
     print(f"Appended to {LOG_FILE}")
 
