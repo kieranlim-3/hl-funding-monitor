@@ -1,7 +1,7 @@
 """
 Hyperliquid Funding Rate Monitor — GitHub Actions version
 Runs once, appends to funding_log.csv, sends Telegram update, then exits.
-Triggered every hour by GitHub Actions cron.
+Triggered every 15 mins by GitHub Actions cron.
 """
 
 import requests
@@ -111,8 +111,8 @@ def append_row(timestamp, coin, data, signal):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    now  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    hl   = fetch_hl_rates()
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    hl  = fetch_hl_rates()
 
     if not hl:
         send_telegram("⚠️ HL Monitor: Failed to fetch funding rates.")
@@ -146,11 +146,19 @@ def main():
         )
 
         if notify:
-            alerts.append(
-                f"🚨 <b>{coin}</b> funding attractive on HL!\n"
-                f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
-                f"Short perp on HL, buy spot on Coinhako."
-            )
+            if d["funding_apy"] < -0.05:
+                alerts.append(
+                    f"🟢 <b>{coin}</b> funding NEGATIVE on HL!\n"
+                    f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
+                    f"Long perp on HL to collect funding.\n"
+                    f"Consider accumulating spot on Coinhako."
+                )
+            else:
+                alerts.append(
+                    f"🚨 <b>{coin}</b> funding ATTRACTIVE on HL!\n"
+                    f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
+                    f"Short perp on HL, buy spot on Coinhako."
+                )
 
     if not alerts:
         lines.append("\n<i>No positions recommended right now.</i>")
