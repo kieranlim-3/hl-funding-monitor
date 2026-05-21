@@ -81,18 +81,29 @@ def fetch_binance_rates():
     result = {}
     for coin, symbol in BINANCE_SYMBOLS.items():
         try:
+            # Use ticker endpoint which includes funding rate
             res = requests.get(
-                BINANCE_API,
-                params={"symbol": symbol},
+                "https://fapi.binance.com/fapi/v1/fundingRate",
+                params={"symbol": symbol, "limit": 1},
                 timeout=10
             )
             res.raise_for_status()
-            data       = res.json()
-            funding_8h = float(data["lastFundingRate"])
+            data = res.json()
+            if not data:
+                continue
+            funding_8h = float(data[0]["fundingRate"])
+            # Get mark price separately
+            res2 = requests.get(
+                "https://fapi.binance.com/fapi/v1/premiumIndex",
+                params={"symbol": symbol},
+                timeout=10
+            )
+            res2.raise_for_status()
+            data2 = res2.json()
             result[coin] = {
                 "funding_8h":  funding_8h,
                 "funding_apy": funding_8h * 3 * 365,
-                "mark_px":     float(data["markPrice"]),
+                "mark_px":     float(data2["markPrice"]),
             }
         except Exception as e:
             print(f"[ERROR] Binance fetch failed for {coin}: {e}")
