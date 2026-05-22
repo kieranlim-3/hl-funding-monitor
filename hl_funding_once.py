@@ -25,6 +25,14 @@ HL_API = "https://api.hyperliquid.xyz/info"
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# ── Spot target prices ────────────────────────────────────────────────────────
+SPOT_TARGETS = {
+    "BTC":  40000,
+    "ETH":  1200,
+    "HYPE": 40,
+}
+NEAR_TARGET_PCT = 0.20  # alert when within 20% of target
+
 # ── Telegram ──────────────────────────────────────────────────────────────────
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -87,6 +95,29 @@ def evaluate_signal(funding_apy):
     else:
         return f"ATTRACTIVE (net ~{net_apy:.1%}) 🚨", True
 
+# ── Price alert ───────────────────────────────────────────────────────────────
+def evaluate_price(coin, mark_px):
+    if coin not in SPOT_TARGETS:
+        return None
+    target    = SPOT_TARGETS[coin]
+    near_line = target * (1 + NEAR_TARGET_PCT)
+    pct_away  = (mark_px - target) / target * 100
+
+    if mark_px <= target:
+        return (
+            f"🎯 <b>{coin} HIT TARGET!</b>\n"
+            f"Mark: ${mark_px:,.2f} | Target: ${target:,}\n"
+            f"Consider buying spot on Coinhako now.\n"
+            f"Tranche 1 entry."
+        )
+    elif mark_px <= near_line:
+        return (
+            f"👀 <b>{coin} approaching target</b>\n"
+            f"Mark: ${mark_px:,.2f} | Target: ${target:,} ({pct_away:.1f}% away)\n"
+            f"Prepare dry powder — getting close."
+        )
+    return None
+
 # ── CSV ───────────────────────────────────────────────────────────────────────
 def init_csv():
     if not os.path.exists(LOG_FILE):
@@ -120,8 +151,9 @@ def main():
 
     init_csv()
 
-    lines  = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
-    alerts = []
+    lines         = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
+    alerts        = []
+    price_alerts  = []
 
     print(f"[{now}]")
     for coin in COINS:
@@ -132,19 +164,24 @@ def main():
         signal, notify = evaluate_signal(d["funding_apy"])
         append_row(now, coin, d, signal)
 
+        target    = SPOT_TARGETS.get(coin, 0)
+        pct_away  = (d["mark_px"] - target) / target * 100
+
         print(
             f"  {coin:4s} | "
             f"8h: {d['funding_8h']:+.4%} | "
             f"APY: {d['funding_apy']:+.2%} | "
             f"Mark: ${d['mark_px']:,.2f} | "
+            f"Target: ${target:,} ({pct_away:+.1f}%) | "
             f"{signal}"
         )
 
         lines.append(
             f"<b>{coin}</b> | APY: {d['funding_apy']:+.2%} | "
-            f"${d['mark_px']:,.2f}\n{signal}"
+            f"${d['mark_px']:,.2f} ({pct_away:+.1f}% to target)\n{signal}"
         )
 
+        # Funding alerts
         if notify:
             if d["funding_apy"] < -0.05:
                 alerts.append(
@@ -160,11 +197,20 @@ def main():
                     f"Short perp on HL, buy spot on Coinhako."
                 )
 
-    if not alerts:
+        # Price alerts
+        price_msg = evaluate_price(coin, d["mark_px"])
+        if price_msg:
+            price_alerts.append(price_msg)
+
+    if not alerts and not price_alerts:
         lines.append("\n<i>No positions recommended right now.</i>")
 
     send_telegram("\n\n".join(lines))
+
     for alert in alerts:
+        send_telegram(alert)
+
+    for alert in price_alerts:
         send_telegram(alert)
 
     print(f"Appended to {LOG_FILE}")
