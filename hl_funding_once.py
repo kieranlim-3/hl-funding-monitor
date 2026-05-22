@@ -19,6 +19,9 @@ THRESHOLD_LOW    = 0.05
 THRESHOLD_MEDIUM = 0.15
 THRESHOLD_HIGH   = 0.30
 
+THRESHOLD_NEG_CONSIDER = -0.15  # -15% APY to consider long perp
+THRESHOLD_NEG_STRONG   = -0.30  # -30% APY strong signal
+
 HL_API = "https://api.hyperliquid.xyz/info"
 
 # Telegram
@@ -80,9 +83,9 @@ def fetch_hl_rates():
 def evaluate_signal(funding_apy):
     fee_apy = (ENTRY_EXIT / 30) * 365
     net_apy = funding_apy - fee_apy
-    if funding_apy < -0.10:
+    if funding_apy < THRESHOLD_NEG_STRONG:
         return "VERY NEGATIVE 🟢 LONG PERP!", True
-    elif funding_apy < -0.05:
+    elif funding_apy < THRESHOLD_NEG_CONSIDER:
         return f"NEGATIVE (net ~{abs(net_apy):.1%}) 🟢 consider long perp", True
     elif funding_apy < 0:
         return "SLIGHTLY NEGATIVE ⚡ monitor", False
@@ -151,9 +154,9 @@ def main():
 
     init_csv()
 
-    lines         = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
-    alerts        = []
-    price_alerts  = []
+    lines        = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
+    alerts       = []
+    price_alerts = []
 
     print(f"[{now}]")
     for coin in COINS:
@@ -164,8 +167,8 @@ def main():
         signal, notify = evaluate_signal(d["funding_apy"])
         append_row(now, coin, d, signal)
 
-        target    = SPOT_TARGETS.get(coin, 0)
-        pct_away  = (d["mark_px"] - target) / target * 100
+        target   = SPOT_TARGETS.get(coin, 0)
+        pct_away = (d["mark_px"] - target) / target * 100
 
         print(
             f"  {coin:4s} | "
@@ -183,7 +186,7 @@ def main():
 
         # Funding alerts
         if notify:
-            if d["funding_apy"] < -0.05:
+            if d["funding_apy"] < THRESHOLD_NEG_CONSIDER:
                 alerts.append(
                     f"🟢 <b>{coin}</b> funding NEGATIVE on HL!\n"
                     f"APY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\n"
@@ -206,10 +209,8 @@ def main():
         lines.append("\n<i>No positions recommended right now.</i>")
 
     send_telegram("\n\n".join(lines))
-
     for alert in alerts:
         send_telegram(alert)
-
     for alert in price_alerts:
         send_telegram(alert)
 
