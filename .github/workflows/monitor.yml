@@ -34,3 +34,5 @@ jobs:
           git add funding_log.csv
           git diff --staged --quiet || git commit -m "funding update $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
+          git add funding_log.csv oi_log.json
+
