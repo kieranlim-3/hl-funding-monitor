@@ -1,0 +1,4 @@
+requests
+numpy
+hmmlearn
+scikit-learn
