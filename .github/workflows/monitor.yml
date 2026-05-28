@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -22,86 +25,4 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: |
-          python - << 'PYEOF'
-          import requests, os
-          from datetime import datetime, timezone
-
-          COINS = ["BTC", "ETH", "HYPE"]
-          TAKER_FEE = 0.00035
-          ENTRY_EXIT = TAKER_FEE * 2
-          THRESHOLD_LOW = 0.05
-          THRESHOLD_MEDIUM = 0.15
-          THRESHOLD_HIGH = 0.30
-          THRESHOLD_NEG_CONSIDER = -0.15
-          THRESHOLD_NEG_STRONG = -0.30
-          HL_API = "https://api.hyperliquid.xyz/info"
-          TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-          TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
-          SPOT_TARGETS = {"BTC": 40000, "ETH": 1200, "HYPE": 40}
-          NEAR_TARGET_PCT = 0.20
-
-          def send_telegram(message):
-              try:
-                  url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                  requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}, timeout=10)
-              except Exception as e:
-                  print(f"Telegram error: {e}")
-
-          def fetch_hl():
-              res = requests.post(HL_API, json={"type": "metaAndAssetCtxs"}, timeout=10)
-              res.raise_for_status()
-              data = res.json()
-              assets = data[0]["universe"]
-              ctxs = data[1]
-              result = {}
-              for i, asset in enumerate(assets):
-                  if asset["name"] in COINS:
-                      ctx = ctxs[i]
-                      f8h = float(ctx["funding"])
-                      result[asset["name"]] = {"funding_8h": f8h, "funding_apy": f8h*3*365, "mark_px": float(ctx["markPx"])}
-              return result
-
-          def signal(apy):
-              fee = (ENTRY_EXIT/30)*365
-              net = apy - fee
-              if apy < THRESHOLD_NEG_STRONG: return "VERY NEGATIVE 🟢 LONG PERP!", True
-              elif apy < THRESHOLD_NEG_CONSIDER: return f"NEGATIVE (net ~{abs(net):.1%}) 🟢 consider long perp", True
-              elif apy < 0: return "SLIGHTLY NEGATIVE ⚡ monitor", False
-              elif apy < THRESHOLD_LOW: return f"TOO LOW (net ~{net:.1%}) ⬇️", False
-              elif apy < THRESHOLD_MEDIUM: return f"MARGINAL (net ~{net:.1%}) 😐", False
-              elif apy < THRESHOLD_HIGH: return f"DECENT (net ~{net:.1%}) 👀", True
-              else: return f"ATTRACTIVE (net ~{net:.1%}) 🚨", True
-
-          now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-          hl = fetch_hl()
-          lines = [f"<b>📊 HL Funding — {now} UTC</b>\n"]
-          alerts = []
-          price_alerts = []
-
-          for coin in COINS:
-              if coin not in hl: continue
-              d = hl[coin]
-              sig, notify = signal(d["funding_apy"])
-              target = SPOT_TARGETS.get(coin, 0)
-              pct_away = (d["mark_px"] - target) / target * 100
-              lines.append(f"<b>{coin}</b> | APY: {d['funding_apy']:+.2%} | ${d['mark_px']:,.2f} ({pct_away:+.1f}% to target)\n{sig}")
-              if notify:
-                  if d["funding_apy"] < THRESHOLD_NEG_CONSIDER:
-                      alerts.append(f"🟢 <b>{coin}</b> funding NEGATIVE!\nAPY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\nLong perp on HL.")
-                  else:
-                      alerts.append(f"🚨 <b>{coin}</b> funding ATTRACTIVE!\nAPY: {d['funding_apy']:+.2%} | Mark: ${d['mark_px']:,.2f}\nShort perp on HL, buy spot on Coinhako.")
-              near = target * (1 + NEAR_TARGET_PCT)
-              if d["mark_px"] <= target:
-                  price_alerts.append(f"🎯 <b>{coin} HIT TARGET!</b>\nMark: ${d['mark_px']:,.2f} | Target: ${target:,}\nBuy spot on Coinhako now.")
-              elif d["mark_px"] <= near:
-                  price_alerts.append(f"👀 <b>{coin} approaching target</b>\nMark: ${d['mark_px']:,.2f} | Target: ${target:,} ({pct_away:.1f}% away)\nPrepare dry powder.")
-
-          if not alerts and not price_alerts:
-              lines.append("\n<i>No signals right now.</i>")
-
-          send_telegram("\n\n".join(lines))
-          for a in alerts: send_telegram(a)
-          for a in price_alerts: send_telegram(a)
-          print("Done")
-          PYEOF
+        run: python hl_funding_once.py
