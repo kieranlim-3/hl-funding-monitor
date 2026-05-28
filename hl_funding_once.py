@@ -64,7 +64,7 @@ def send_telegram(message):
            "text": message,
            "parse_mode": "HTML"
        }, timeout=10)
-       time.sleep(1)
+       time.sleep(2)
    except Exception as e:
        print(f"[ERROR] Telegram send failed: {e}")
 
