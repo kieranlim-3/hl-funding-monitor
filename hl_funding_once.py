@@ -9,12 +9,14 @@ Improvements over v1:
 - Funding momentum filter: requires 3 consecutive readings trending more negative
 - Top N screener by most negative / most positive funding
 - OI delta stored in CSV for analysis
+- Settlement countdown on every message
 """
 
 import requests
 import csv
 import os
 import json
+import time
 from datetime import datetime, timezone
 from collections import defaultdict
 
@@ -62,8 +64,25 @@ def send_telegram(message):
            "text": message,
            "parse_mode": "HTML"
        }, timeout=10)
+       time.sleep(1)
    except Exception as e:
        print(f"[ERROR] Telegram send failed: {e}")
+
+# ── Settlement countdown ──────────────────────────────────────────────────────
+
+def time_to_settlement(now_dt):
+   """Returns hours and minutes until next 8h funding settlement (00, 08, 16 UTC)."""
+   hour = now_dt.hour
+   minute = now_dt.minute
+   next_settlement = ((hour // 8) + 1) * 8
+   if next_settlement >= 24:
+       next_settlement = 0
+   hours_left = (next_settlement - hour - 1)
+   mins_left = 60 - minute
+   if mins_left == 60:
+       mins_left = 0
+       hours_left += 1
+   return hours_left, mins_left
 
 # ── Fetch ALL HL perps ────────────────────────────────────────────────────────
 
@@ -124,7 +143,6 @@ def compute_oi_delta(coin, current_oi, prev_oi_log):
    if coin not in prev_oi_log:
        return None, False
    prev_oi = prev_oi_log[coin]
-   # Handle legacy format where values were stored as dicts
    if isinstance(prev_oi, dict):
        prev_oi = prev_oi.get("open_interest", 0)
    if not prev_oi or prev_oi == 0:
@@ -305,7 +323,10 @@ def format_coin_line(coin, d):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-   now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+   now_dt = datetime.now(timezone.utc)
+   now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+   h, m = time_to_settlement(now_dt)
+   settlement_tag = f"⏱ Next settlement in {h}h {m}m"
 
    hl = fetch_hl_rates()
    if not hl:
@@ -328,7 +349,7 @@ def main():
 
    # 1. Squeeze setups
    if squeeze_setups:
-       squeeze_msg = [f"🔥 <b>SQUEEZE SETUPS — {now} UTC</b>\n"]
+       squeeze_msg = [f"🔥 <b>SQUEEZE SETUPS — {now} UTC</b>\n{settlement_tag}\n"]
        for coin, d in squeeze_setups:
            oi_delta_str = f"{d['oi_delta_pct']:+.1%}" if d['oi_delta_pct'] is not None else "n/a"
            squeeze_msg.append(
@@ -339,7 +360,7 @@ def main():
        send_telegram("\n\n".join(squeeze_msg))
 
    # 2. Screener report
-   lines = [f"<b>📊 HL Screener — {now} UTC</b>\n"]
+   lines = [f"<b>📊 HL Screener — {now} UTC</b>\n{settlement_tag}\n"]
    lines.append(f"<b>🟢 TOP {TOP_N} MOST NEGATIVE FUNDING</b>")
    for coin, d in top_neg:
        lines.append(format_coin_line(coin, d))
@@ -349,7 +370,7 @@ def main():
    send_telegram("\n\n".join(lines))
 
    # 3. Pinned coins
-   pinned_lines = [f"<b>📌 Pinned — {now} UTC</b>\n"]
+   pinned_lines = [f"<b>📌 Pinned — {now} UTC</b>\n{settlement_tag}\n"]
    for coin in PINNED_COINS:
        if coin in enriched:
            pinned_lines.append(format_coin_line(coin, enriched[coin]))
@@ -362,6 +383,7 @@ def main():
            send_telegram(price_msg)
 
    print(f"\n[{now}] Screened {len(enriched)} liquid coins")
+   print(f"Next settlement in {h}h {m}m")
    print(f"TOP {TOP_N} MOST NEGATIVE:")
    for coin, d in top_neg:
        oi_tag = " [OI SURGE]" if d["oi_surge"] else ""
